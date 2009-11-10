@@ -439,6 +439,7 @@ my $no_chdir=0;
 my $jobs=1;
 my $trust_all=0;
 my $directory=getcwd();
+my $posixshell=get_posix_shell();
 $ENV{MR_CONFIG}="$ENV{HOME}/.mrconfig";
 
 # globals :-(
@@ -451,6 +452,10 @@ my (@ok, @failed, @skipped);
 main();
 
 my %rcs;
+sub get_posix_shell {
+	return "/usr/xpg4/bin/sh" if ( $^O eq "solaris" );
+	return "/bin/sh";
+}
 sub rcs_test {
 	my ($action, $dir, $topdir, $subdir) = @_;
 
@@ -543,7 +548,7 @@ sub action {
 		my $test="set -e;".$lib.
 			"my_action(){ $skiptest\n }; my_action '$action'";
 		print "mr $action: running skip test >>$test<<\n" if $verbose;
-		my $ret=system($test);
+		my $ret=system($posixshell, '-c', $test);
 		if ($ret != 0) {
 			if (($? & 127) == 2) {
 				print STDERR "mr $action: interrupted\n";
@@ -593,7 +598,7 @@ sub action {
 			"my_action(){ $command\n }; my_action ".
 			join(" ", map { s/\//\/\//g; s/"/\"/g; '"'.$_.'"' } @ARGV);
 		print "mr $action: running >>$command<<\n" if $verbose;
-		my $ret=system($command);
+		my $ret=system($posixshell, '-c', $command);
 		if ($ret != 0) {
 			if (($? & 127) == 2) {
 				print STDERR "mr $action: interrupted\n";
@@ -1080,7 +1085,7 @@ sub loadconfig {
 				if ($parameter eq 'chain' &&
 				    length $dir && $section ne "DEFAULT" &&
 				    -e $dir.$section."/.mrconfig") {
-					my $ret=system($value);
+					my $ret=system($posixshell, '-c', $value);
 					if ($ret != 0) {
 						if (($? & 127) == 2) {
 							print STDERR "mr: chain test interrupted\n";
@@ -1321,7 +1326,7 @@ sub register {
 		"my_action(){ $command\n }; my_action ".
 		join(" ", map { s/\//\/\//g; s/"/\"/g; '"'.$_.'"' } @ARGV);
 	print "mr register: running >>$command<<\n" if $verbose;
-	exec($command) || die "exec: $!";
+	exec($posixshell, '-c', $command) || die "exec: $!";
 }
 
 sub bootstrap {
