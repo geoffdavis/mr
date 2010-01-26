@@ -219,6 +219,12 @@ Be verbose.
 
 Be quiet.
 
+=item -k
+
+=item --insecure
+
+Accept untrusted SSL certificates when bootstrapping.
+
 =item -s
 
 =item --stats
@@ -383,7 +389,7 @@ due to being offline. You can delete or edit this file to remove commands,
 or even to add other commands for 'mr online' to run. If the file is
 present, mr assumes it is in offline mode.
 
-=head "UNTRUSTED MRCONFIG FILES"
+=head1 "UNTRUSTED MRCONFIG FILES"
 
 Since mrconfig files can contain arbitrary shell commands, they can do
 anything. This flexability is good, but it also allows a malicious mrconfig
@@ -433,6 +439,7 @@ my $config_overridden=0;
 my $verbose=0;
 my $quiet=0;
 my $stats=0;
+my $insecure=0;
 my $interactive=0;
 my $max_depth;
 my $no_chdir=0;
@@ -712,7 +719,7 @@ sub record {
 
 	if ($ret == OK) {
 		push @ok, $dir;
-		print "\n";
+		print "\n" unless $quiet;
 	}
 	elsif ($ret == FAILED) {
 		if ($interactive) {
@@ -721,7 +728,7 @@ sub record {
 			system((getpwuid($<))[8], "-i");
 		}
 		push @failed, $dir;
-		print "\n";
+		print "\n" unless $quiet;
 	}
 	elsif ($ret == SKIPPED) {
 		push @skipped, $dir;
@@ -785,6 +792,15 @@ sub repolist {
 	} @list;
 }
 
+sub repodir {
+	my $repo=shift;
+	my $topdir=$repo->{topdir};
+	my $subdir=$repo->{subdir};
+	my $ret=($subdir =~/^\//) ? $subdir : $topdir.$subdir;
+	$ret=~s/\/\.$//;
+	return $ret;
+}
+
 # figure out which repos to act on
 sub selectrepos {
 	my @repos;
@@ -793,7 +809,7 @@ sub selectrepos {
 		my $subdir=$repo->{subdir};
 
 		next if $subdir eq 'DEFAULT';
-		my $dir=($subdir =~/^\//) ? $subdir : $topdir.$subdir;
+		my $dir=repodir($repo);
 		my $d=$directory;
 		$dir.="/" unless $dir=~/\/$/;
 		$d.="/" unless $d=~/\/$/;
@@ -813,7 +829,7 @@ sub selectrepos {
 			my $subdir=$repo->{subdir};
 			
 			next if $subdir eq 'DEFAULT';
-			my $dir=($subdir =~/^\//) ? $subdir : $topdir.$subdir;
+			my $dir=repodir($repo);
 			my $d=$directory;
 			$dir.="/" unless $dir=~/\/$/;
 			$d.="/" unless $d=~/\/$/;
@@ -1006,7 +1022,7 @@ sub loadconfig {
 		open($in, "<", $f) || die "mr: open $f: $!\n";
 	}
 	my @lines=<$in>;
-	close $in;
+	close $in unless ref $f eq 'GLOB';
 
 	my $section;
 	my $line=0;
@@ -1026,6 +1042,12 @@ sub loadconfig {
 				}
 			}
 			$section=expandenv($section) if $trusted;
+			if ($section ne 'ALIAS' &&
+			    ! exists $config{$dir}{$section} &&
+			    exists $config{$dir}{DEFAULT}) {
+				# copy in defaults
+				$config{$dir}{$section}={ %{$config{$dir}{DEFAULT}} };
+			}
 		}
 		elsif (/^(\w+)\s*=\s*(.*)/) {
 			my $parameter=$1;
@@ -1061,12 +1083,6 @@ sub loadconfig {
 
 			if (! defined $section) {
 				die "$f line $.: parameter ($parameter) not in section\n";
-			}
-			if ($section ne 'ALIAS' &&
-			    ! exists $config{$dir}{$section} &&
-			    exists $config{$dir}{DEFAULT}) {
-				# copy in defaults
-				$config{$dir}{$section}={ %{$config{$dir}{DEFAULT}} };
 			}
 			if ($section eq 'ALIAS') {
 				$alias{$parameter}=$value;
@@ -1109,6 +1125,13 @@ sub loadconfig {
 	foreach (@toload) {
 		loadconfig($_);
 	}
+}
+
+sub startingconfig {
+	%alias=%config=%configfiles=%knownactions=%loaded=();
+	my $datapos=tell(DATA);
+	loadconfig(\*DATA);
+	seek(DATA,$datapos,0); # rewind
 }
 
 sub modifyconfig {
@@ -1341,9 +1364,11 @@ sub bootstrap {
 	eval q{use File::Temp};
 	die $@ if $@;
 	my $tmpconfig=File::Temp->new();
-	if (system("curl", "-A", "mr", "-s", $url, "-o", $tmpconfig) != 0) {
-		die "mr: download of $url failed\n";
-	}
+	my @curlargs = ("curl", "-A", "mr", "-L", "-s", $url, "-o", $tmpconfig);
+	push(@curlargs, "-k") if $insecure;
+	my $curlstatus = system(@curlargs);
+	die "mr bootstrap: invalid SSL certificate for $url (consider -k)\n" if $curlstatus >> 8 == 60;
+	die "mr bootstrap: download of $url failed\n" if $curlstatus != 0;
 
 	if (! -e $dir) {
 		system("mkdir", "-p", $dir);
@@ -1359,14 +1384,22 @@ sub bootstrap {
 		if exists $config{$topdir}{"."}{"checkout"};
 
 	if (-e ".mrconfig") {
-		print STDERR "mr: .mrconfig file already exists, not overwriting with $url\n";
+		print STDERR "mr bootstrap: .mrconfig file already exists, not overwriting with $url\n";
 	}
 	else {
-		rename($tmpconfig, ".mrconfig") || die "rename: $!";
+		eval q{use File::Copy};
+		die $@ if $@;
+		move($tmpconfig, ".mrconfig") || die "rename: $!";
 	}
 
-	exec("mr $ENV{MR_SWITCHES} -c .mrconfig checkout");
-	die "failed to run mr checkout";
+	# Reload the config file (in case we got a different version)
+	# and checkout everything else.
+	startingconfig();
+	loadconfig(".mrconfig");
+	dispatch("checkout");
+	@skipped=grep { abs_path($_) ne abs_path($topdir) } @skipped;
+	showstats("bootstrap");
+	exitstats();
 }
 
 # alias expansion and command stemming
@@ -1414,6 +1447,7 @@ sub getopts {
 		"v|verbose" => \$verbose,
 		"q|quiet" => \$quiet,
 		"s|stats" => \$stats,
+		"k|insecure" => \$insecure,
 		"i|interactive" => \$interactive,
 		"n|no-recurse:i" => \$max_depth,
 		"j|jobs:i" => \$jobs,
@@ -1454,19 +1488,8 @@ sub init {
 		$ENV{MR_PATH}=$Bin."/".$Script;
 	};
 }
-
-sub main {
-	getopts();
-	init();
-
-	loadconfig(\*DATA);
-	loadconfig($ENV{MR_CONFIG});
-	#use Data::Dumper; print Dumper(\%config);
 	
-	my $action=expandaction(shift @ARGV);
-	dispatch($action);
-	showstats($action);
-
+sub exitstats {
 	if (@failed) {
 		exit 1;
 	}
@@ -1476,6 +1499,21 @@ sub main {
 	else {
 		exit 0;
 	}
+}
+
+sub main {
+	getopts();
+	init();
+
+	startingconfig();
+	loadconfig($ENV{MR_CONFIG});
+	#use Data::Dumper; print Dumper(\%config);
+	
+	my $action=expandaction(shift @ARGV);
+	dispatch($action);
+
+	showstats($action);
+	exitstats();
 }
 
 # Finally, some useful actions that mr knows about by default.

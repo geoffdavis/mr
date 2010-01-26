@@ -1,10 +1,36 @@
-mr (0.44) UNRELEASED; urgency=low
+mr (0.47) UNRELEASED; urgency=low
+
+  * Pass -L to curl to allow it to follow redirects when bootstrapping.
+    (Pavel Avgustinov)
+  * Allow empty sections to be used in mrconfig files.
+
+ -- Joey Hess <joeyh@debian.org>  Sun, 13 Dec 2009 13:04:53 -0500
+
+mr (0.46) unstable; urgency=low
+
+  * Avoid using abs_path to determine canonical repo path, as that fails
+    when the repo has not yet been checked out.
+
+ -- Joey Hess <joeyh@debian.org>  Thu, 10 Dec 2009 17:28:26 -0500
+
+mr (0.45) unstable; urgency=low
+
+  * Fix pod error. Closes: #558012
+  * bootstrap: Improve stats display.
+  * Add --insecure option that can be used to ignore SSL cert errors
+    when bootstrapping. (Pavel Avgustinov)
+  * Fix handling of a repository in "."
+
+ -- Joey Hess <joeyh@debian.org>  Tue, 08 Dec 2009 14:58:21 -0500
+
+mr (0.44) unstable; urgency=low
 
   * Make mr -i pass -i to the shell, to ensure it knows it should be an
     interactive shell.
   * mr help: Support man on SunOS and OS X. (Geoff Davis)
+  * mr bootstrap: Fix cross-device rename failure. Closes: #557962
 
- -- Joey Hess <joeyh@debian.org>  Thu, 24 Sep 2009 21:52:27 -0400
+ -- Joey Hess <joeyh@debian.org>  Wed, 25 Nov 2009 12:39:08 -0500
 
 mr (0.43) unstable; urgency=low
 
